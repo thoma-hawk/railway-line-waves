@@ -255,19 +255,8 @@
           <label>Auto-detect <input type="range" min="0" max="1" step="1" data-k="stationEnable"><span data-v="stationEnable"></span></label>
           <label>Window (segs) <input type="range" min="0" max="10" step="1" data-k="stationWindow"><span data-v="stationWindow"></span></label>
           <label>Transition width (wu) <input type="range" min="50" max="3000" step="10" data-k="stationTransitionWidth"><span data-v="stationTransitionWidth"></span></label>
-          <label>Spacing × <input type="range" min="1" max="8" step="0.1" data-k="stationSpacingMul"><span data-v="stationSpacingMul"></span></label>
-          <label>Morph speed <input type="range" min="0.5" max="8" step="0.1" data-k="stationMorphSpeed"><span data-v="stationMorphSpeed"></span></label>
-          <!-- Independent W/H easing — defers height growth so the pill
-               silhouette is held across the early keyframes (matches
-               svg/v2/sleeperSpacingMorph.svg). -->
-          <label>Morph width power <input type="range" min="0.3" max="5" step="0.05" data-k="morphWidthPower"><span data-v="morphWidthPower"></span></label>
-          <label>Morph height power <input type="range" min="0.3" max="6" step="0.05" data-k="morphHeightPower"><span data-v="morphHeightPower"></span></label>
-          <label>Morph colour power <input type="range" min="0.3" max="5" step="0.05" data-k="morphColorPower"><span data-v="morphColorPower"></span></label>
-          <label>Morph easing <input type="range" min="0" max="1" step="0.01" data-k="morphEasingAmt"><span data-v="morphEasingAmt"></span></label>
-          <!-- Approach controls — retained in CONFIG/preset compatibility
-               but unused by the simplified pill→station morph. The three
-               Morph knobs above (width/height power + easing) fully shape
-               the transition curve. -->
+          <label>Every Nth pill <input type="range" min="1" max="12" step="1" data-k="stationEvery"><span data-v="stationEvery"></span></label>
+          <label>Morph curve <input type="range" min="0" max="1" step="0.01" data-k="morphCurve"><span data-v="morphCurve"></span></label>
           <!-- Station (final wide-rectangle keyframe at wStation=1.0) -->
           <div style="font-size:10px; color:#9aa4b0; letter-spacing:.06em; text-transform:uppercase; margin:6px 0 2px;">Station (rectangle)</div>
           <label>Station W <input type="range" min="2" max="400" step="0.5" data-k="stationW"><span data-v="stationW"></span></label>

@@ -76,21 +76,11 @@ const CONFIG = {
   // (e.g. 80) to match the SVG reference where the rail is a broad band.
   sleeperRailClip: 1.0,
 
-  // Morph easing — TD pixel_b uMorphEase. Width and height interpolate on
-  // INDEPENDENTLY-eased curves of wStation. heightPow > widthPow defers
-  // height growth so the pill keeps its silhouette across the early
-  // keyframes (matches svg/v2/sleeperSpacingMorph.svg, where H is held
-  // flat across KF0..KF2 and only expands near the station). easingAmt
-  // mixes linear → smootherstep+smoothstep for zero-acceleration ends.
-  // 1.0 / 1.0 / 0.0 reproduces the previous "all-linear" behaviour.
-  morphWidthPower:  1.4,
-  morphHeightPower: 3.5,
-  morphEasingAmt:   0.81,
-  // Independent easing for the SLEEPER → STATION colour blend. Power < 1
-  // makes the colour shift earlier than the shape; > 1 makes it lag.
-  // Matches svg/v2/sleeperSpacingMorph.svg where colour starts to drift
-  // before the pill widens.
-  morphColorPower:  4.2,
+  // Morph curve — single easing knob shared by W, H, corner and colour.
+  // 0 = linear ramp from pill to station, 1 = smootherstep (zero-velocity
+  // at both ends). The pill grows in place and adjacent pills fade out as
+  // the morph advances; see drawSleepers().
+  morphCurve: 1.0,
 
   // Effects — per-layer blur (texture-sample blur inside the shader) so
   // each layer can soften independently while staying inside the rail mask.
@@ -121,28 +111,21 @@ const CONFIG = {
   stationSolid:   0.0,
   approachWeight: 0.0,
 
-  // ── 3-stage sleeper → approach → station morph ────────────────────────
-  // Direct pill → station morph driven by wStation (0..1). Shape of the
-  // transition is fully controlled by morphWidthPower / morphHeightPower /
-  // morphEasingAmt above — no intermediate "approach" keyframe.
-  //   0.0 → pill    (uSleeper{W,H,Corner}/Color)
-  //   1.0 → station (uStation{W,H,Corner}/InnerCol) — wide rectangle
-  //
-  // The body box is an optional outer halo behind the station inner; in
-  // the SVG reference there is no body, so defaults zero its multipliers.
-  // Bump stationBodyWmul/Hmul above 1 to bring back the TD-style halo.
+  // ── Pill → station morph ──────────────────────────────────────────────
+  // wStation (0..1) is computed per fragment by stationWeight(). It drives
+  // a single eased curve `w` that morphs every Nth pill (the "station-
+  // elect") in place from pill geometry to station geometry, while the
+  // other (N-1) pills fade out via alpha. The pill grid spacing is FIXED —
+  // no snap-grid widening — so growth is continuously visible.
   //
   //  stationEnable      : auto-detect single-lane mode on (TD uStationCtrl.x).
   //  stationWindow      : max ± segments scanned (used when segW is small).
   //  stationTransitionWidth : world-units half-width of the gradient zone
-  //                       around each lane-count boundary. With segW=1200
-  //                       and width=600, sleepers within ±600wu of a
-  //                       boundary see a smooth wStation ramp — gives the
-  //                       SVG-style multi-keyframe progression instead of
-  //                       a hard pill/station snap.
-  //  stationSpacingMul  : grid widens by this in station state (decimation).
-  //  stationMorphSpeed  : sharpens the 0→1 transition curve. 1.0 = linear
-  //                       (best for visible gradient). Higher = snappier.
+  //                       around each lane-count boundary. Smaller = snappier
+  //                       transition; larger = more frames of in-betweening.
+  //  stationEvery       : every Nth pill grows into a station. The other
+  //                       (N-1) pills fade out as the morph advances. Higher
+  //                       N = sparser stations.
   //  station{W,H}       : final wide-rectangle half-extents.
   //  stationCorner      : final corner radius. 0 = sharp.
   //  stationBodyWmul/Hmul: optional outer halo size (× station inner).
@@ -153,8 +136,7 @@ const CONFIG = {
                                     // morph drive comes from the smooth
                                     // stationTransitionWidth kernel below
   stationTransitionWidth: 1560,     // world units — half-width of gradient zone
-  stationSpacingMul:      7.7,
-  stationMorphSpeed:      1.0,      // 1.0 = linear smoothstep; higher sharpens
+  stationEvery:           8,        // every 8th pill becomes a station
   // Station state — wide rectangle. Tuned against svg/v2/sleeperSpacingMorph.svg
   // (KF4: 121.66 × 139.73, corner 20.72) but shrunk/widened slightly for the
   // working art-direction; tweak via the Split/merge tab.
@@ -167,8 +149,8 @@ const CONFIG = {
   stationBodyWmul:   0.0,
   stationBodyHmul:   0.0,
   // Per-rail station inner colours — companions to sleeperColor{,Top,Bot}.
-  // wEaseC lerps each family's sleeper colour into its station colour, so
-  // the morph is per-rail end-to-end.
+  // The morph eased weight `w` lerps each family's sleeper colour into its
+  // station colour, so the morph is per-rail end-to-end.
   stationInnerCol:    '#becf9e', // CENTER rail
   stationInnerColTop: '#becf9e', // TOP rail
   stationInnerColBot: '#becf9e', // BOT rail
@@ -545,19 +527,14 @@ const mat = new THREE.ShaderMaterial({
     uSleeperColorBlend: { value: CONFIG.sleeperColorBlend },
     uSleeperOpacity:    { value: CONFIG.sleeperOpacity },
     uSleeperRailClip:   { value: CONFIG.sleeperRailClip },
-    uMorphWidthPower:   { value: CONFIG.morphWidthPower },
-    uMorphHeightPower:  { value: CONFIG.morphHeightPower },
-    uMorphEasingAmt:    { value: CONFIG.morphEasingAmt },
-    uMorphColorPower:   { value: CONFIG.morphColorPower },
+    uMorphCurve:        { value: CONFIG.morphCurve },
 
     // Pill → station morph. uStation* drives the window scan + final keyframe;
-    // shape of the transition is controlled by uMorph{Width,Height}Power +
-    // uMorphEasingAmt (above) so no intermediate keyframe is needed.
+    // uMorphCurve eases the 0..1 weight; uStationEvery picks which pills grow.
     uStationEnable:          { value: CONFIG.stationEnable },
     uStationWindow:          { value: CONFIG.stationWindow },
     uStationTransitionWidth: { value: CONFIG.stationTransitionWidth },
-    uStationSpacingMul:      { value: CONFIG.stationSpacingMul },
-    uStationMorphSpeed:      { value: CONFIG.stationMorphSpeed },
+    uStationEvery:           { value: CONFIG.stationEvery },
     uStationW:          { value: CONFIG.stationW },
     uStationH:          { value: CONFIG.stationH },
     uStationCorner:     { value: CONFIG.stationCorner },
@@ -635,24 +612,17 @@ const mat = new THREE.ShaderMaterial({
     uniform float uSleeperRailClip;
     // Morph easing (TD pixel_b uMorphEase). Width and height interpolate on
     // independently-eased curves of wStation; easingAmt blends linear → silky.
-    uniform float uMorphWidthPower;
-    uniform float uMorphHeightPower;
-    uniform float uMorphEasingAmt;
-    uniform float uMorphColorPower;     // independent ease for sleeper→station colour
+    uniform float uMorphCurve;          // 0=linear, 1=smootherstep (single ease knob)
 
-    // Sleeper → station morph — TD parity. wStation 0..1 lerps every aspect:
-    //   • inner half-extents:  (uSleeperW, uSleeperH) → (uStationW, uStationH)
-    //   • inner corner radius: uSleeperCorner → uStationCorner
-    //   • inner color:         uSleeperColor → uStationInnerCol
-    //   • snap grid:           uSleeperSpacing → uSleeperSpacing * uStationSpacingMul
-    //                          (decimates pills so every Nth becomes a station)
-    //   • outer body box:      faded in at wStation=1, sized as uStationW*Mul.x
-    //                          and uStationH*Mul.y, color uStationBodyCol
+    // Pill → station morph. wStation 0..1 (per fragment, from stationWeight)
+    // is eased once into w; every Nth pill (the station-elect) interpolates
+    // its (W, H, corner, colour) from pill values to station values by w,
+    // while the other (N-1) pills fade out via alpha — pill grid spacing is
+    // FIXED so every pill grows in place, never snap-jumps to a wider grid.
     uniform float uStationEnable;       // .x of TD uStationCtrl
     uniform float uStationWindow;       // .y of TD uStationCtrl — max segs scanned
     uniform float uStationTransitionWidth; // world-units half-width of gradient kernel
-    uniform float uStationSpacingMul;   // .z of TD uStationCtrl
-    uniform float uStationMorphSpeed;   // .z of TD uStationForce — 0→1 sharpness
+    uniform float uStationEvery;        // every Nth pill becomes a station
     uniform float uStationW;            // half-width  (TD uStationShape.x / 2)
     uniform float uStationH;            // half-height (TD uStationShape.y / 2)
     uniform float uStationCorner;       // TD uStationCorner.x
@@ -1238,12 +1208,6 @@ const mat = new THREE.ShaderMaterial({
       // Timeline force — max'd with auto-detect so a manual stationSolid
       // override always wins upward (use 0 to let auto-detect drive).
       wStation = max(wStation, clamp(uStationSolid, 0.0, 1.0));
-      // Optional sharpener — at morphSpeed=1 this is the identity smoothstep
-      // (0..1), preserving the gradient. Higher values compress the gradient
-      // toward 0/1 (snappier flip but kills the approach state).
-      float mSpeed = max(uStationMorphSpeed, 0.1);
-      float halfW  = 0.5 / mSpeed;
-      wStation     = smoothstep(0.5 - halfW, 0.5 + halfW, wStation);
       return clamp(wStation, 0.0, 1.0);
     }
 
@@ -1266,64 +1230,46 @@ const mat = new THREE.ShaderMaterial({
     //   • outer body box appears at wStation>0, sized as uStationBodyMul ×
     //     inner, drawn UNDER the inner so the inner reads as the platform.
     vec4 drawSleepers(float wx, float wy) {
-      // ── Per-pill morph (matches TD pixel_b drawSleeperSet) ────────────
-      // Each pill is owned by exactly one segment row (the OWNERSHIP GATE
-      // below enforces this), so we can evaluate the morph PER ROW inside
-      // the lane loop. Every fragment composing one pill then sees IDENTICAL
-      // wStation / effW / effH / spEff. The earlier per-fragment evaluation
-      // raced at pill edges — left and right of the same pill resolved to
-      // different effW / spEff and the SDF truncated.
+      // ── Single-pass per-pill morph ────────────────────────────────────
+      // ONE eased weight w drives BOTH the pill (W, H, corner, colour) AND
+      // the snap spacing — together. As w: 0→1 each pill grows from sleeper
+      // (8×44) to station (187×69) while spacing widens spF → spF*N. Because
+      // shape and spacing share the same curve, every pill that is visible
+      // at the start morphs continuously into a station; pills "between"
+      // station-elects coalesce into the widening neighbours. No fade-out,
+      // no vanishing — the pill geometry IS the morph.
       //
-      // Direct pill → station morph (no intermediate "approach" keyframe).
-      // The shape of the transition is fully controlled by the three knobs
-      // morphWidthPower / morphHeightPower / morphEasingAmt, so the pill
-      // silhouette can be held across the early morph and only bloom near
-      // the station — matching svg/v2/sleeperSpacingMorph.svg.
+      // The original bug here was four separate eased curves (width, height,
+      // colour, easingAmt) that desynced shape from spacing — pills barely
+      // started growing before the snap grid widened past them, so they
+      // visually disappeared. Sharing one curve fixes that.
 
       int segRowI = int(floor((wx - uLaneOriginX) / uSegW));
 
-      // Track the WINNING pill's morph values so compositing uses the same
-      // pill the SDF locked onto. Initialised to pill defaults for a clean
-      // miss path (hit==0 returns transparent anyway).
       float minDInner = 1e9;
       float winLx = 0.0, winLy = 0.0;
       vec3  winCol   = uSleeperColor;
-      float winEaseW = 0.0;
+      float winW     = 0.0;   // for body halo — eased pill weight
       int   hit = 0;
 
       for (int rowOff = -1; rowOff <= 1; rowOff++) {
         int r = segRowI + rowOff;
         if (r < 0 || float(r) >= uBufferSegs) continue;
 
-        // Per-row morph values, evaluated at the row's center. Stable for
-        // all fragments processing this row — so all fragments of any pill
-        // owned by this row see the same effW/effH/spEff. heightPow >
-        // widthPow keeps the pill silhouette through the early morph.
-        float wxRow   = (float(r) + 0.5) * uSegW + uLaneOriginX;
-        float wStn    = stationWeight(wxRow);
-        float wQ      = wStn*wStn*wStn*(wStn*(wStn*6.0-15.0)+10.0);
-        float wInput  = mix(wStn, wQ, clamp(uMorphEasingAmt, 0.0, 1.0));
-        float wEaseW  = pow(wInput, max(uMorphWidthPower,  0.05));
-        float wEaseH  = pow(wInput, max(uMorphHeightPower, 0.05));
-        // Independent colour ease — power < 1 makes colour shift earlier
-        // than the shape, > 1 makes it lag. Lets sleeper→station colour
-        // drift before the pill widens (matches the SVG reference).
-        float wEaseC  = pow(wInput, max(uMorphColorPower,  0.05));
-        float smW     = wEaseW * wEaseW * (3.0 - 2.0 * wEaseW);
-        float smH     = wEaseH * wEaseH * (3.0 - 2.0 * wEaseH);
-        float smC     = wEaseC * wEaseC * (3.0 - 2.0 * wEaseC);
-        wEaseW = mix(wEaseW, smW, clamp(uMorphEasingAmt, 0.0, 1.0));
-        wEaseH = mix(wEaseH, smH, clamp(uMorphEasingAmt, 0.0, 1.0));
-        wEaseC = mix(wEaseC, smC, clamp(uMorphEasingAmt, 0.0, 1.0));
+        // Per-row morph weight, evaluated at the row centre. Stable for
+        // every fragment in this row so each pill's SDF agrees on w.
+        float wxRow = (float(r) + 0.5) * uSegW + uLaneOriginX;
+        float wRaw  = stationWeight(wxRow);
+        // Single eased curve — linear (uMorphCurve=0) ↔ smootherstep (=1).
+        float wSm   = wRaw*wRaw*wRaw*(wRaw*(wRaw*6.0-15.0)+10.0);
+        float w     = mix(wRaw, wSm, clamp(uMorphCurve, 0.0, 1.0));
 
-        float spMulEff = max(uStationSpacingMul, 1.0);
-        float spWide   = uSleeperSpacing * spMulEff;
-        float spEff    = mix(uSleeperSpacing, spWide, wEaseW);
-
-        // 2-stop pill → station — the eased curves do all the shaping.
-        float effW      = mix(uSleeperW,      uStationW,        wEaseW);
-        float effH      = mix(uSleeperH,      uStationH,        wEaseH);
-        float effCorner = mix(uSleeperCorner, uStationCorner,   wEaseW);
+        float N    = max(uStationEvery, 1.0);
+        // Spacing AND shape both interpolate on the same w.
+        float spEff     = mix(uSleeperSpacing, uSleeperSpacing * N, w);
+        float effW      = mix(uSleeperW,       uStationW,           w);
+        float effH      = mix(uSleeperH,       uStationH,           w);
+        float effCorner = mix(uSleeperCorner,  uStationCorner,      w);
 
         for (int s = 0; s < 8; s++) {
           if (float(s) >= uMaxSlots) break;
@@ -1340,8 +1286,7 @@ const mat = new THREE.ShaderMaterial({
           float sIdx = floor(wx / spEff + 0.5);
           float sleeperCenterWx = sIdx * spEff;
 
-          // OWNERSHIP GATE — pill drawn ONLY from its owning segment row,
-          // guaranteeing per-pill morph consistency.
+          // OWNERSHIP GATE — pill drawn ONLY from its owning segment row.
           int sleeperSegR = int(floor((sleeperCenterWx - uLaneOriginX) / uSegW));
           if (sleeperSegR != r) continue;
 
@@ -1349,15 +1294,8 @@ const mat = new THREE.ShaderMaterial({
           float ly = wy - yc;
           float dI = sdRoundBox(vec2(lx, ly), vec2(effW, effH), effCorner);
           if (dI < minDInner) {
-            // Per-rail colour — SOFT 3-way blend by lane-Y. Each pill
-            // sits at one yc so the result is one solid colour per pill,
-            // but pills mid-curve between two rail families get a
-            // smooth crossfade instead of snapping at ±laneSpace/2.
-            //
-            // Bands are width 'band' on either side of the family
-            // boundary (uSleeperColorBlend scales it). Inside the
-            // blend window, two families contribute weighted by
-            // smoothstep; outside, one family wins cleanly.
+            // Per-rail colour — soft 3-way blend by lane-Y, then eased
+            // sleeper → station mix on the same w.
             float h_   = uLaneSpace * 0.5;
             float band = max(uLaneSpace * uSleeperColorBlend, 1e-3);
             float wTopS = smoothstep( h_ - band,  h_ + band,  yc);
@@ -1369,12 +1307,11 @@ const mat = new THREE.ShaderMaterial({
             vec3 stCol = wCenS * uStationInnerCol
                        + wTopS * uStationInnerColTop
                        + wBotS * uStationInnerColBot;
-            vec3 innerCol = mix(sCol, stCol, wEaseC);
 
             minDInner = dI;
             winLx = lx; winLy = ly;
-            winCol = innerCol;
-            winEaseW = wEaseW;
+            winCol = mix(sCol, stCol, w);
+            winW   = w;
             hit = 1;
           }
         }
@@ -1386,17 +1323,16 @@ const mat = new THREE.ShaderMaterial({
       float aaI    = max(fwidth(minDInner), 1e-4);
       float innerA = (1.0 - smoothstep(-aaI, aaI, minDInner)) * uSleeperOpacity;
 
-      // Optional body halo behind the inner. Sized off the winning pill's
-      // wEaseW so the halo grows in lock step with the visible pill.
-      // Defaults of uStationBodyMul = 0 collapse the halo to nothing.
+      // Optional body halo behind the inner — sized off the eased weight
+      // so it grows in lock step with the visible pill.
       float bodyA = 0.0;
-      if (winEaseW > 1e-4 && (uStationBodyMul.x > 1e-4 || uStationBodyMul.y > 1e-4)) {
-        float bodyW      = uStationW * uStationBodyMul.x * winEaseW;
-        float bodyH      = uStationH * uStationBodyMul.y * winEaseW;
-        float bodyCorner = uStationCorner * winEaseW;
+      if (winW > 1e-4 && (uStationBodyMul.x > 1e-4 || uStationBodyMul.y > 1e-4)) {
+        float bodyW      = uStationW * uStationBodyMul.x * winW;
+        float bodyH      = uStationH * uStationBodyMul.y * winW;
+        float bodyCorner = uStationCorner * winW;
         float dB         = sdRoundBox(vec2(winLx, winLy), vec2(bodyW, bodyH), bodyCorner);
         float aaB        = max(fwidth(dB), 1e-4);
-        bodyA            = (1.0 - smoothstep(-aaB, aaB, dB)) * uSleeperOpacity * winEaseW;
+        bodyA            = (1.0 - smoothstep(-aaB, aaB, dB)) * uSleeperOpacity * winW;
       }
 
       // Composite: body under, inner over (straight alpha).
@@ -1708,16 +1644,12 @@ function applyConfig() {
   mat.uniforms.uSleeperColorBlend.value = CONFIG.sleeperColorBlend;
   mat.uniforms.uSleeperOpacity.value = CONFIG.sleeperOpacity;
   mat.uniforms.uSleeperRailClip.value = CONFIG.sleeperRailClip;
-  mat.uniforms.uMorphWidthPower.value  = CONFIG.morphWidthPower;
-  mat.uniforms.uMorphColorPower.value  = CONFIG.morphColorPower;
-  mat.uniforms.uMorphHeightPower.value = CONFIG.morphHeightPower;
-  mat.uniforms.uMorphEasingAmt.value   = CONFIG.morphEasingAmt;
+  mat.uniforms.uMorphCurve.value             = CONFIG.morphCurve;
   // Pill → station morph
   mat.uniforms.uStationEnable.value          = CONFIG.stationEnable;
   mat.uniforms.uStationWindow.value          = CONFIG.stationWindow;
   mat.uniforms.uStationTransitionWidth.value = CONFIG.stationTransitionWidth;
-  mat.uniforms.uStationSpacingMul.value      = CONFIG.stationSpacingMul;
-  mat.uniforms.uStationMorphSpeed.value      = CONFIG.stationMorphSpeed;
+  mat.uniforms.uStationEvery.value           = CONFIG.stationEvery;
   mat.uniforms.uStationW.value          = CONFIG.stationW;
   mat.uniforms.uStationH.value          = CONFIG.stationH;
   mat.uniforms.uStationCorner.value     = CONFIG.stationCorner;
