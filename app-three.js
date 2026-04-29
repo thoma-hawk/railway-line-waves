@@ -44,7 +44,7 @@ const CONFIG = {
   railColor:    '#1F2528',
   gradOpacity:  1.0,
   railPatchMix: 1.0,
-  bgColor:      '#0B0F11',
+  bgColor:      '#292929',
   viewZoom:     1.52,
 
   // Sleepers — base (branched-state) shape. Mirrors TD's sleeper_d block:
@@ -91,10 +91,11 @@ const CONFIG = {
   // hard cutoff that appears where a rail starts or ends. 0 = off,
   // 0.5 = fade across the last half of the segment.
   patchEdgeFade: 0.30,
-  grainAmount:  0.00,
-  grainScale:   1000,   // ~1000/grainScale = screen pixels per grain cell.
-                        // 1000 → 1 px (sharp speckle), 500 → 2 px (chunky),
-                        // 2000+ aliases sub-pixel. Stays consistent across zoom.
+  grainAmount:  0.02,
+  grainScale:   50,     // shader clamps "px per cell" to a 1-px floor, so any
+                        // value ≤ 1000 renders as 1-px speckle (slider's lower
+                        // half is a no-op). Raise above 1000 for chunkier
+                        // grain (e.g. 2000 → 2 px, 4000 → 4 px per cell).
 
   // Simulation
   simMode:      'scripted', // 'scripted' | 'procedural'
