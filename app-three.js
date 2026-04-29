@@ -723,6 +723,37 @@ const mat = new THREE.ShaderMaterial({
       return c / 16.0;
     }
 
+    // ── Colour-space lerp ────────────────────────────────────────────────
+    // Linear-RGB mix of two reds → muddy brown midtones; perceptually the
+    // sleeper→station palette transition (red ↔ pale sage) reads as a hard
+    // jump because the midpoint sits in low-chroma territory. OkLab is a
+    // perceptually-uniform colour space (Björn Ottosson, 2020) — mixing in
+    // OkLab keeps chroma along the path, so the morph reads as a smooth
+    // gradient instead of a wash through brown.
+    vec3 mixOklab(vec3 a, vec3 b, float t) {
+      mat3 toLMS = mat3(
+        0.4122214708, 0.2119034982, 0.0883024619,
+        0.5363325363, 0.6806995451, 0.2817188376,
+        0.0514459929, 0.1073969566, 0.6299787005);
+      mat3 toLab = mat3(
+        0.2104542553,  1.9779984951,  0.0259040371,
+        0.7936177850, -2.4285922050,  0.7827717662,
+       -0.0040720468,  0.4505937099, -0.8086757660);
+      mat3 fromLab = mat3(
+        1.0,  1.0,  1.0,
+        0.3963377774, -0.1055613458, -0.0894841775,
+        0.2158037573, -0.0638541728, -1.2914855480);
+      mat3 fromLMS = mat3(
+        4.0767416621, -1.2684380046, -0.0041960863,
+       -3.3077115913,  2.6097574011, -0.7034186147,
+        0.2309699292, -0.3413193965,  1.7076147010);
+      vec3 la = toLab * pow(max(toLMS * a, 0.0), vec3(1.0/3.0));
+      vec3 lb = toLab * pow(max(toLMS * b, 0.0), vec3(1.0/3.0));
+      vec3 lm = mix(la, lb, t);
+      vec3 lms = fromLab * lm;
+      return fromLMS * (lms * lms * lms);
+    }
+
     // ── Lane data helpers ────────────────────────────────────────────────
     // fetchLane(slot, seg)  -> vec4(sx, y1, y2, valid)
     // Uses NearestFilter on the texture so the sample picks the exact cell.
@@ -1269,6 +1300,26 @@ const mat = new THREE.ShaderMaterial({
 
       int segRowI = int(floor((wx - uLaneOriginX) / uSegW));
 
+      // Morph weight evaluated ONCE at the fragment's wx — every candidate
+      // pill at this fragment (across rowOff -1..+1) shares this w, so pills
+      // owned by adjacent rows meet at the row boundary without a size/
+      // position step. Previously w was per-row; the row-centre samples
+      // differed slightly, producing a visible mismatch at the seam.
+      float wRaw = stationWeight(wx);
+      float wSm  = wRaw*wRaw*wRaw*(wRaw*(wRaw*6.0-15.0)+10.0);
+      float w    = mix(wRaw, wSm, clamp(uMorphCurve, 0.0, 1.0));
+      // Lane-count gate — sampled at this fragment's row. Suppresses morph
+      // in multi-lane rows so each lane keeps painting small pills until
+      // the rails have actually collapsed into a single lane.
+      float laneGate = smoothstep(2.0, 1.0, countLanesAt(segRowI));
+      w *= laneGate;
+
+      float N         = max(uStationEvery, 1.0);
+      float spEff     = mix(uSleeperSpacing, uSleeperSpacing * N, w);
+      float effW      = mix(uSleeperW,       uStationW,           w);
+      float effH      = mix(uSleeperH,       uStationH,           w);
+      float effCorner = mix(uSleeperCorner,  uStationCorner,      w);
+
       float minDInner = 1e9;
       float winLx = 0.0, winLy = 0.0;
       vec3  winCol   = uSleeperColor;
@@ -1278,21 +1329,6 @@ const mat = new THREE.ShaderMaterial({
       for (int rowOff = -1; rowOff <= 1; rowOff++) {
         int r = segRowI + rowOff;
         if (r < 0 || float(r) >= uBufferSegs) continue;
-
-        // Per-row morph weight, evaluated at the row centre. Stable for
-        // every fragment in this row so each pill's SDF agrees on w.
-        float wxRow = (float(r) + 0.5) * uSegW + uLaneOriginX;
-        float wRaw  = stationWeight(wxRow);
-        // Single eased curve — linear (uMorphCurve=0) ↔ smootherstep (=1).
-        float wSm   = wRaw*wRaw*wRaw*(wRaw*(wRaw*6.0-15.0)+10.0);
-        float w     = mix(wRaw, wSm, clamp(uMorphCurve, 0.0, 1.0));
-
-        float N    = max(uStationEvery, 1.0);
-        // Spacing AND shape both interpolate on the same w.
-        float spEff     = mix(uSleeperSpacing, uSleeperSpacing * N, w);
-        float effW      = mix(uSleeperW,       uStationW,           w);
-        float effH      = mix(uSleeperH,       uStationH,           w);
-        float effCorner = mix(uSleeperCorner,  uStationCorner,      w);
 
         for (int s = 0; s < 8; s++) {
           if (float(s) >= uMaxSlots) break;
@@ -1333,7 +1369,7 @@ const mat = new THREE.ShaderMaterial({
 
             minDInner = dI;
             winLx = lx; winLy = ly;
-            winCol = mix(sCol, stCol, w);
+            winCol = mixOklab(sCol, stCol, w);
             winW   = w;
             hit = 1;
           }
