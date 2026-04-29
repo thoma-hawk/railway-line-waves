@@ -15,7 +15,7 @@
 
 // ── Config ────────────────────────────────────────────────────────────────
 const CONFIG = {
-  speed:        2712,   // world units / second — advances cameraX (drives topology scroll)
+  speed:        5605,   // world units / second — advances cameraX (drives topology scroll)
   pulsePeriod:  100000, // one full ramp cycle in world units
   // Per-rail phase offset (0..1, fractions of pulsePeriod). Each rail family
   // samples the gradient at gradU = fract(wx/period + phase) so the three
@@ -43,9 +43,9 @@ const CONFIG = {
   railBlend:    0.0,
   railColor:    '#1F2528',
   gradOpacity:  1.0,
-  railPatchMix: 0.0,
+  railPatchMix: 1.0,
   bgColor:      '#0B0F11',
-  viewZoom:     1.55,
+  viewZoom:     1.52,
 
   // Sleepers — base (branched-state) shape. Mirrors TD's sleeper_d block:
   // Sleeperdspacing / Sleeperdwidth / Sleeperdheight / Sleeperdcorner.
@@ -151,7 +151,7 @@ const CONFIG = {
   // Per-rail station inner colours — companions to sleeperColor{,Top,Bot}.
   // The morph eased weight `w` lerps each family's sleeper colour into its
   // station colour, so the morph is per-rail end-to-end.
-  stationInnerCol:    '#becf9e', // CENTER rail
+  stationInnerCol:    '#f0fec6', // CENTER rail
   stationInnerColTop: '#becf9e', // TOP rail
   stationInnerColBot: '#becf9e', // BOT rail
   stationBodyCol:    '#A6A793',
@@ -244,7 +244,20 @@ function defaultPatch() {
     featherY: 0.45,
   };
 }
-const PATCH_TABLE = [ defaultPatch() ];
+// Initial patch — a soft deep-red splash on the TOP rail. Edit / add via the
+// Patches tab; defaultPatch() above is the template used by "+ Add patch".
+const PATCH_TABLE = [{
+  arcPos:    10590,
+  halfWidth: 0.039,
+  bandMin:   0.0,
+  bandMax:   1.0,
+  color:     [0.647, 0.137, 0.129],
+  alpha:     0.41,
+  vMode:     'bell',
+  rail:      'top',
+  featherX:  1.0,
+  featherY:  0.96,
+}];
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const hexToRgb = (h) => {
