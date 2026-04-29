@@ -92,7 +92,9 @@ const CONFIG = {
   // 0.5 = fade across the last half of the segment.
   patchEdgeFade: 0.30,
   grainAmount:  0.00,
-  grainScale:   500,
+  grainScale:   1000,   // ~1000/grainScale = screen pixels per grain cell.
+                        // 1000 → 1 px (sharp speckle), 500 → 2 px (chunky),
+                        // 2000+ aliases sub-pixel. Stays consistent across zoom.
 
   // Simulation
   simMode:      'scripted', // 'scripted' | 'procedural'
@@ -1386,11 +1388,28 @@ const mat = new THREE.ShaderMaterial({
       acc.rgb = sleeper.rgb + acc.rgb * (1.0 - sleeper.a);
       acc.a   = sleeper.a   + acc.a   * (1.0 - sleeper.a);
 
-      // World-anchored grain modulation — unchanged from the static layout.
+      // Pixel-grid binary speckle. The cell IS the canvas pixel — sampling
+      // any finer than that just moirés against the device pixel grid.
+      //
+      // World-anchoring (so the speckle travels with the rail) is achieved
+      // by offsetting the per-pixel seed by the camera's X in canvas-pixel
+      // units. As uCameraX advances, the seed shifts but the cell grid stays
+      // pinned to the screen, so there is never sub-pixel aliasing.
+      //
+      // uGrainScale ≥ 1: every Nth canvas pixel gets a fresh hash; values
+      // between fill in with the same hash (chunkier speckle). 1 → finest.
       if (uGrainAmount > 0.0) {
-        vec2 nuv = vec2(wx, wy) * (uGrainScale * 0.001);
-        float n  = fbm(nuv);
-        acc.rgb *= (1.0 - uGrainAmount) + uGrainAmount * n * 2.0;
+        float pxPerWu = uResolution.y * uZoom / 1000.0;
+        float gs = max(uGrainScale * 0.001, 1.0);     // pixels per cell
+        vec2 cell = floor((gl_FragCoord.xy + vec2(uCameraX * pxPerWu, 0.0)) / gs);
+        // Wrap into a 4096×4096 tile before hashing — at long camera offsets
+        // (uCameraX * pxPerWu ≫ 1e5) the multiply inside hash12 outruns
+        // float32 fractional precision and the noise collapses into stripes.
+        // The repeat tile is far larger than any viewport so the wrap is
+        // invisible.
+        cell = mod(cell, 4096.0);
+        float n   = step(0.5, hash12(cell));
+        acc.rgb  *= mix(1.0, n * 1.4, uGrainAmount);
       }
 
       // Composite over background so the bgColor uniform actually shows
