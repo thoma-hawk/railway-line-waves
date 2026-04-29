@@ -15,7 +15,7 @@
 
 // ── Config ────────────────────────────────────────────────────────────────
 const CONFIG = {
-  speed:        5605,   // world units / second — advances cameraX (drives topology scroll)
+  speed:        5371,   // world units / second — advances cameraX (drives topology scroll)
   pulsePeriod:  100000, // one full ramp cycle in world units
   // Per-rail phase offset (0..1, fractions of pulsePeriod). Each rail family
   // samples the gradient at gradU = fract(wx/period + phase) so the three
