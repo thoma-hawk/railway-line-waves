@@ -86,6 +86,11 @@ const CONFIG = {
   // each layer can soften independently while staying inside the rail mask.
   gradBlur:     0.20,   // 1D blur along arcU when sampling the ramp (0..0.2)
   patchBlur:    0.00,   // 2D blur when sampling the patch map     (0..0.1)
+  // Sleeper / station edge blur — world units of softening added to the SDF
+  // anti-alias half-width. 0 = crisp pill edges, 5+ = noticeable soft halo.
+  // Same effect as wrapping the sleeper layer in feGaussianBlur (matches
+  // svg/v2/sleeperSpacingMorph.svg's stdDeviation=2 wash).
+  sleeperBlur:  0.0,
   // patchEdgeFade — fades the patch alpha near lane terminations (where a
   // rail's lane has no continuation in the adjacent segment). Stops the
   // hard cutoff that appears where a rail starts or ends. 0 = off,
@@ -507,6 +512,7 @@ const mat = new THREE.ShaderMaterial({
     uGradBlur:     { value: CONFIG.gradBlur },
     uPatchBlur:    { value: CONFIG.patchBlur },
     uPatchEdgeFade: { value: CONFIG.patchEdgeFade },
+    uSleeperBlur:  { value: CONFIG.sleeperBlur },
     uRamp:         { value: rampTex },
     uPatch:        { value: patchTex },
     uGrainAmount:  { value: CONFIG.grainAmount },
@@ -590,6 +596,7 @@ const mat = new THREE.ShaderMaterial({
     uniform float uGradOpacity;    // overall gradient blend amount
     uniform float uGradBlur;       // 1D blur along arcU when sampling the ramp
     uniform float uPatchBlur;      // 2D blur when sampling the patch map
+    uniform float uSleeperBlur;    // world-unit edge softening on sleeper / station SDFs
     uniform float uPatchEdgeFade;  // fade patch alpha near lane terminations
     uniform sampler2D uRamp;
     uniform sampler2D uPatch;
@@ -1336,7 +1343,10 @@ const mat = new THREE.ShaderMaterial({
 
       // Inner pill alpha — SDF-derivative AA stays stable because winLx /
       // winLy / minDInner all come from the same pill.
-      float aaI    = max(fwidth(minDInner), 1e-4);
+      // uSleeperBlur extends the AA half-width by N world units, softening
+      // the SDF edge — same visual effect as wrapping the sleeper layer in
+      // feGaussianBlur. 0 = crisp; >0 = soft halo.
+      float aaI    = max(fwidth(minDInner) + uSleeperBlur, 1e-4);
       float innerA = (1.0 - smoothstep(-aaI, aaI, minDInner)) * uSleeperOpacity;
 
       // Optional body halo behind the inner — sized off the eased weight
@@ -1347,7 +1357,7 @@ const mat = new THREE.ShaderMaterial({
         float bodyH      = uStationH * uStationBodyMul.y * winW;
         float bodyCorner = uStationCorner * winW;
         float dB         = sdRoundBox(vec2(winLx, winLy), vec2(bodyW, bodyH), bodyCorner);
-        float aaB        = max(fwidth(dB), 1e-4);
+        float aaB        = max(fwidth(dB) + uSleeperBlur, 1e-4);
         bodyA            = (1.0 - smoothstep(-aaB, aaB, dB)) * uSleeperOpacity * winW;
       }
 
@@ -1643,6 +1653,7 @@ function applyConfig() {
   mat.uniforms.uGradOpacity.value  = CONFIG.gradOpacity;
   mat.uniforms.uGradBlur.value     = CONFIG.gradBlur;
   mat.uniforms.uPatchBlur.value    = CONFIG.patchBlur;
+  mat.uniforms.uSleeperBlur.value  = CONFIG.sleeperBlur;
   mat.uniforms.uPatchEdgeFade.value = CONFIG.patchEdgeFade;
   mat.uniforms.uGrainAmount.value  = CONFIG.grainAmount;
   mat.uniforms.uGrainScale.value   = CONFIG.grainScale;
