@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Railway Line Waves — Three.js prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    #variant-tag {
+      position: fixed; top: 8px; left: 8px; z-index: 10;
+      font: 11px/1 ui-monospace, monospace;
+      background: rgba(32, 90, 180, 0.85); color: #fff;
+      padding: 4px 8px; border-radius: 4px; letter-spacing: 0.04em;
+    }
+    /* Gradient editor — per-rail stops */
+    .grad-block {
+      border-top: 1px dashed rgba(255, 255, 255, 0.08);
+      padding-top: 4px;
+      margin-top: 4px;
+    }
+    .grad-block h3 {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+      color: #cfd3d8; margin-bottom: 4px;
+    }
+    /* Row columns: pos slider | pos readout | alpha slider | color | × */
+    .grad-stop {
+      display: grid;
+      grid-template-columns: 1fr 38px 52px 24px 20px;
+      gap: 4px; align-items: center;
+      padding: 2px 0;
+    }
+    /* styles.css sets #panel input[type=range] to span 2 columns — override
+       so each slider stays in its own column inside a .grad-stop row. */
+    .grad-stop input[type="range"] { grid-column: auto !important; margin: 0 !important; width: 100%; }
+    .grad-stop input[type="color"] { width: 24px; height: 18px; padding: 0; }
+    /* Figma-style gradient preview bar — gradient painted over a checker so
+       alpha<1 stops show the checker through (like Figma's fill preview). */
+    .grad-preview {
+      height: 22px;
+      border-radius: 4px;
+      margin: 2px 0 4px;
+      background-size: auto, 10px 10px;
+      background-position: 0 0, 0 0;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .grad-stop .pos-readout {
+      font: 10px ui-monospace, monospace; color: #8a94a0; text-align: right;
+    }
+    .grad-stop .del {
+      background: rgba(255,255,255,0.06); color: #e9e9e9;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 3px;
+      width: 20px; height: 18px; font-size: 11px; line-height: 1; cursor: pointer;
+      padding: 0;
+    }
+    .grad-add {
+      background: rgba(255,255,255,0.06); color: #9aa4b0;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
+      padding: 3px 8px; font-size: 10px; cursor: pointer;
+      margin-top: 4px;
+    }
+    .grad-add:hover { color: #e9e9e9; }
+
+    /* Tabs — one per parameter group. Topology + Speed/Zoom/Mode stay pinned
+       above this bar; everything else lives inside a tab panel. */
+    .tabs {
+      display: flex; flex-wrap: wrap; gap: 2px;
+      margin: 6px 0 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 4px;
+    }
+    .tab-btn {
+      background: rgba(255, 255, 255, 0.04);
+      color: #9aa4b0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      padding: 3px 7px;
+      font: 10px ui-monospace, monospace;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .tab-btn:hover { color: #e9e9e9; }
+    .tab-btn.active {
+      background: rgba(100, 140, 200, 0.22);
+      color: #fff;
+      border-color: rgba(140, 170, 220, 0.4);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    /* Inside a tab panel the section's h2 is redundant (the tab button carries
+       the name). Hide it so the content lines up flush. */
+    .tab-panel > h2 { display: none; }
+    /* Pinned "always visible" blocks — no heading, snug layout. */
+    #pinned-sim { padding-top: 2px; }
+    #pinned-view {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Patch list — one row per patch, tighter than the global controls. */
+    .patch-row {
+      border-top: 1px dashed rgba(255, 255, 255, 0.08);
+      padding-top: 4px;
+      margin-top: 4px;
+    }
+    .patch-row .phead {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 10px; color: #8a94a0;
+      margin-bottom: 2px;
+    }
+    .patch-row .pname { font-weight: 600; letter-spacing: 0.04em; color: #cfd3d8; }
+    .patch-row .pmode-select { font-size: 10px; }
+    .patch-row .pctrls { display: flex; gap: 6px; align-items: center; }
+    .patch-row .patch-remove {
+      background: transparent;
+      color: #8a94a0;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 3px;
+      width: 18px; height: 18px;
+      line-height: 14px;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 0;
+    }
+    .patch-row .patch-remove:hover { color: #fff; border-color: rgba(255, 120, 120, 0.5); }
+    .patch-add {
+      margin-top: 10px;
+      width: 100%;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #cfd3d8;
+      border: 1px dashed rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+    .patch-add:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.32); }
+  </style>
+</head>
+<body>
+  <div id="variant-tag">three.js prototype</div>
+  <main class="stage">
+    <canvas id="scene"></canvas>
+
+    <aside id="panel">
+      <header>
+        <h1>Railway (Three.js)</h1>
+        <button id="panel-save-default" class="grad-add" title="Save current settings as the default that Reset returns to (persists in this browser)" style="margin-right:4px;">Save default</button>
+        <button id="panel-reset" class="grad-add" title="Reset all knobs to the saved default" style="margin-right:4px;">Reset</button>
+        <button id="panel-toggle" title="Collapse">–</button>
+      </header>
+
+      <section id="preset-section" style="display:none">
+        <h2>Preset</h2>
+        <label>
+          <select id="preset-select"></select>
+        </label>
+        <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
+          <button id="preset-load"    class="grad-add">Load</button>
+          <button id="preset-copyurl" class="grad-add" title="Copy a shareable URL with current settings">Copy URL</button>
+          <button id="preset-reset"   class="grad-add" title="Back to Default preset">Reset</button>
+        </div>
+        <div id="preset-status" style="font:10px ui-monospace,monospace; color:#8a94a0; margin-top:4px; min-height:1em;"></div>
+      </section>
+
+      <section id="minimap-section">
+        <h2>Topology</h2>
+        <svg id="minimap" width="100%" height="110" viewBox="0 0 600 110"
+             style="display:block; border-radius:4px; background:rgba(0,0,0,0.35); cursor:crosshair;"></svg>
+      </section>
+
+      <!-- Pinned controls: Speed, Zoom, Mode — always visible above the tabs. -->
+      <section id="pinned-sim">
+        <label>Speed <input type="range" min="0" max="30000" step="1" data-k="speed"><span data-v="speed"></span></label>
+        <label>Zoom <input type="range" min="0.05" max="2" step="0.01" data-k="viewZoom"><span data-v="viewZoom"></span></label>
+        <label>Gradient span <input type="range" min="200" max="100000" step="50" data-k="pulsePeriod"><span data-v="pulsePeriod"></span></label>
+        <label>Mode
+          <select data-k="simMode">
+            <option value="scripted">Scripted (looping preset)</option>
+            <option value="procedural">Procedural (seeded roll)</option>
+          </select>
+        </label>
+      </section>
+
+      <!-- Tab bar. First tab active by default. -->
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="sim">Sim</button>
+        <button class="tab-btn"        data-tab="rails">Rails</button>
+        <button class="tab-btn"        data-tab="sleepers">Sleepers</button>
+        <button class="tab-btn"        data-tab="splitmerge">Split / merge</button>
+        <button class="tab-btn"        data-tab="gradients">Gradients</button>
+        <button class="tab-btn"        data-tab="patches">Patches</button>
+        <button class="tab-btn"        data-tab="effects">Effects</button>
+      </div>
+
+      <section class="tab-panel active" data-panel="sim">
+        <h2>Sim</h2>
+        <div id="scripted-only">
+          <label>Script
+            <select data-k="simScript">
+              <option value="v1">v1 — default (3-lane splits)</option>
+              <option value="v5">v5 — 5-lane splits</option>
+            </select>
+          </label>
+          <label>Loop segs <input type="range" min="10" max="120" step="1" data-k="loopSegs"><span data-v="loopSegs"></span></label>
+        </div>
+        <label>Segment width <input type="range" min="40" max="1200" step="2" data-k="segW"><span data-v="segW"></span></label>
+        <div id="procedural-only" style="border-top:1px dashed rgba(255,255,255,0.08); padding-top:4px; margin-top:4px;">
+          <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:#cfd3d8; margin-bottom:4px;">Procedural</div>
+          <label>Seed <input type="number" min="1" max="99999" step="1" data-k="seed" style="width:80px"></label>
+          <button id="reroll-btn" class="grad-add" style="margin-left:4px">re-roll (new seed)</button>
+          <label>Merge chance <input type="range" min="0" max="1" step="0.01" data-k="mergeChance"><span data-v="mergeChance"></span></label>
+          <label>Split chance <input type="range" min="0" max="1" step="0.01" data-k="splitChance"><span data-v="splitChance"></span></label>
+          <label>Max tracks <input type="range" min="1" max="9" step="1" data-k="maxTracks"><span data-v="maxTracks"></span></label>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="sleepers">
+        <h2>Sleepers</h2>
+        <label>Spacing <input type="range" min="10" max="240" step="1" data-k="sleeperSpacing"><span data-v="sleeperSpacing"></span></label>
+        <label>Width (along rail) <input type="range" min="1" max="60" step="0.5" data-k="sleeperW"><span data-v="sleeperW"></span></label>
+        <label>Length (perpendicular) <input type="range" min="10" max="200" step="1" data-k="sleeperH"><span data-v="sleeperH"></span></label>
+        <label>Corner <input type="range" min="0" max="30" step="0.5" data-k="sleeperCorner"><span data-v="sleeperCorner"></span></label>
+        <label>Top colour <input type="color" data-k="sleeperColorTop"></label>
+        <label>Center colour <input type="color" data-k="sleeperColor"></label>
+        <label>Bot colour <input type="color" data-k="sleeperColorBot"></label>
+        <label>Colour blend <input type="range" min="0" max="1" step="0.01" data-k="sleeperColorBlend"><span data-v="sleeperColorBlend"></span></label>
+        <label>Opacity <input type="range" min="0" max="1" step="0.01" data-k="sleeperOpacity"><span data-v="sleeperOpacity"></span></label>
+        <label>Clip to rail <input type="range" min="0" max="1" step="0.01" data-k="sleeperRailClip"><span data-v="sleeperRailClip"></span></label>
+      </section>
+
+      <section class="tab-panel" data-panel="rails">
+        <h2>Rails</h2>
+        <label>Base colour <input type="color" data-k="railColor"></label>
+        <label>Gradient opacity <input type="range" min="0" max="1" step="0.01" data-k="gradOpacity"><span data-v="gradOpacity"></span></label>
+        <label>Rail width <input type="range" min="4" max="200" step="1" data-k="railWidth"><span data-v="railWidth"></span></label>
+        <label>Softness <input type="range" min="0" max="1" step="0.01" data-k="railSoft"><span data-v="railSoft"></span></label>
+        <label>Falloff sigma <input type="range" min="0.2" max="1.5" step="0.01" data-k="railSigma"><span data-v="railSigma"></span></label>
+        <label>Lane space <input type="range" min="40" max="600" step="2" data-k="laneSpace"><span data-v="laneSpace"></span></label>
+        <label>Patch mix <input type="range" min="0" max="1" step="0.01" data-k="railPatchMix"><span data-v="railPatchMix"></span></label>
+      </section>
+
+      <section class="tab-panel" data-panel="splitmerge">
+        <h2>Split / merge</h2>
+        <label>Station solid <input type="range" min="0" max="1" step="0.01" data-k="stationSolid"><span data-v="stationSolid"></span></label>
+        <label>Approach weight <input type="range" min="0" max="1" step="0.01" data-k="approachWeight"><span data-v="approachWeight"></span></label>
+        <label>Center colour <input type="color" data-k="railCenterCol"></label>
+        <label>Top colour <input type="color" data-k="railTopCol"></label>
+        <label>Bot colour <input type="color" data-k="railBotCol"></label>
+        <!-- ── Pill → station morph ─────────────── -->
+        <div style="border-top:1px dashed rgba(255,255,255,0.08); padding-top:6px; margin-top:6px;">
+          <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:#cfd3d8; margin-bottom:4px;">Station morph (pill → station)</div>
+          <label>Auto-detect <input type="range" min="0" max="1" step="1" data-k="stationEnable"><span data-v="stationEnable"></span></label>
+          <label>Window (segs) <input type="range" min="0" max="10" step="1" data-k="stationWindow"><span data-v="stationWindow"></span></label>
+          <label>Transition width (wu) <input type="range" min="50" max="3000" step="10" data-k="stationTransitionWidth"><span data-v="stationTransitionWidth"></span></label>
+          <label>Spacing × <input type="range" min="1" max="8" step="0.1" data-k="stationSpacingMul"><span data-v="stationSpacingMul"></span></label>
+          <label>Morph speed <input type="range" min="0.5" max="8" step="0.1" data-k="stationMorphSpeed"><span data-v="stationMorphSpeed"></span></label>
+          <!-- Independent W/H easing — defers height growth so the pill
+               silhouette is held across the early keyframes (matches
+               svg/v2/sleeperSpacingMorph.svg). -->
+          <label>Morph width power <input type="range" min="0.3" max="5" step="0.05" data-k="morphWidthPower"><span data-v="morphWidthPower"></span></label>
+          <label>Morph height power <input type="range" min="0.3" max="6" step="0.05" data-k="morphHeightPower"><span data-v="morphHeightPower"></span></label>
+          <label>Morph colour power <input type="range" min="0.3" max="5" step="0.05" data-k="morphColorPower"><span data-v="morphColorPower"></span></label>
+          <label>Morph easing <input type="range" min="0" max="1" step="0.01" data-k="morphEasingAmt"><span data-v="morphEasingAmt"></span></label>
+          <!-- Approach controls — retained in CONFIG/preset compatibility
+               but unused by the simplified pill→station morph. The three
+               Morph knobs above (width/height power + easing) fully shape
+               the transition curve. -->
+          <!-- Station (final wide-rectangle keyframe at wStation=1.0) -->
+          <div style="font-size:10px; color:#9aa4b0; letter-spacing:.06em; text-transform:uppercase; margin:6px 0 2px;">Station (rectangle)</div>
+          <label>Station W <input type="range" min="2" max="400" step="0.5" data-k="stationW"><span data-v="stationW"></span></label>
+          <label>Station H <input type="range" min="10" max="300" step="1" data-k="stationH"><span data-v="stationH"></span></label>
+          <label>Station corner <input type="range" min="0" max="80" step="0.5" data-k="stationCorner"><span data-v="stationCorner"></span></label>
+          <label>Station top colour <input type="color" data-k="stationInnerColTop"></label>
+          <label>Station center colour <input type="color" data-k="stationInnerCol"></label>
+          <label>Station bot colour <input type="color" data-k="stationInnerColBot"></label>
+          <!-- Optional body halo behind the station inner. Default OFF. -->
+          <div style="font-size:10px; color:#9aa4b0; letter-spacing:.06em; text-transform:uppercase; margin:6px 0 2px;">Body halo (optional)</div>
+          <label>Body W × <input type="range" min="0" max="4" step="0.05" data-k="stationBodyWmul"><span data-v="stationBodyWmul"></span></label>
+          <label>Body H × <input type="range" min="0" max="3" step="0.05" data-k="stationBodyHmul"><span data-v="stationBodyHmul"></span></label>
+          <label>Body colour <input type="color" data-k="stationBodyCol"></label>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="effects">
+        <h2>Effects</h2>
+        <label>Gradient blur <input type="range" min="0" max="0.20" step="0.001" data-k="gradBlur"><span data-v="gradBlur"></span></label>
+        <label>Patch blur <input type="range" min="0" max="0.10" step="0.001" data-k="patchBlur"><span data-v="patchBlur"></span></label>
+        <label>Patch edge fade <input type="range" min="0" max="0.5" step="0.01" data-k="patchEdgeFade"><span data-v="patchEdgeFade"></span></label>
+        <label>Grain <input type="range" min="0" max="0.8" step="0.01" data-k="grainAmount"><span data-v="grainAmount"></span></label>
+        <label>Grain scale <input type="range" min="50" max="2000" step="10" data-k="grainScale"><span data-v="grainScale"></span></label>
+      </section>
+
+      <section class="tab-panel" id="gradient-section" data-panel="gradients">
+        <h2>Gradients</h2>
+        <!-- Per-rail phase offsets — shift each family's gradient pulse along
+             the world-X axis so top/center/bot read as distinct travelling
+             bands instead of a single synced tape. -->
+        <label>Top phase <input type="range" min="0" max="1" step="0.01" data-k="gradPhaseTop"><span data-v="gradPhaseTop"></span></label>
+        <label>Center phase <input type="range" min="0" max="1" step="0.01" data-k="gradPhaseCenter"><span data-v="gradPhaseCenter"></span></label>
+        <label>Bot phase <input type="range" min="0" max="1" step="0.01" data-k="gradPhaseBot"><span data-v="gradPhaseBot"></span></label>
+        <label>Family blend <input type="range" min="0" max="1" step="0.01" data-k="railColorBlend"><span data-v="railColorBlend"></span></label>
+        <!-- per-rail stop editors generated by app-three.js -->
+      </section>
+
+      <section class="tab-panel" id="patch-section" data-panel="patches">
+        <h2>Patches</h2>
+        <!-- rows generated by app-three.js -->
+      </section>
+
+      <!-- Pinned at the bottom of the panel, always visible regardless of tab. -->
+      <section id="pinned-view">
+        <label>Background <input type="color" data-k="bgColor"></label>
+      </section>
+
+      <!-- Export — PNG snapshot + frame-perfect PNG sequence (zip). -->
+      <section id="pinned-export" style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.08);">
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; color:#cfd3d8; margin-bottom:4px;">Export</div>
+        <label>FPS <input type="number" id="export-fps" min="1" max="120" step="1" value="60" style="width:60px"></label>
+        <label>Frames (0 = one loop) <input type="number" id="export-frames" min="0" max="10000" step="1" value="0" style="width:80px"></label>
+        <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
+          <button id="export-png-snap" class="grad-add">Snapshot PNG</button>
+          <button id="export-png-seq"  class="grad-add">PNG sequence</button>
+        </div>
+        <div id="export-status" style="font:10px ui-monospace,monospace; color:#8a94a0; margin-top:4px; min-height:1em;"></div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- Non-module (UMD) build so this page works via file:// too.
+       Three.js removed UMD in r151 — we pin to r150 for the global THREE. -->
+  <script src="https://unpkg.com/three@0.150.0/build/three.min.js"></script>
+  <!-- JSZip — used by the PNG sequence exporter to package frames into a zip. -->
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- Tab switcher — hide/show panels on click. No persistence (panel state
+       is already ephemeral anyway). -->
+  <script>
+    (function () {
+      const tabs   = document.querySelectorAll('.tab-btn');
+      const panels = document.querySelectorAll('.tab-panel');
+      tabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.tab;
+          tabs.forEach(b   => b.classList.toggle('active', b === btn));
+          panels.forEach(p => p.classList.toggle('active', p.dataset.panel === key));
+        });
+      });
+    })();
+  </script>
+  <!-- Lane simulator (split/merge topology) — shared with the Canvas2D variant. -->
+  <script src="sim.js"></script>
+  <script src="app-three.js"></script>
+</body>
+</html>
